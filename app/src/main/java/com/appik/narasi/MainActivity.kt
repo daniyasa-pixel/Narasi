@@ -1,6 +1,10 @@
 package com.appik.narasi
 
 import android.Manifest
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.FileInputStream
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
@@ -113,6 +117,39 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
     var currentAudioPath by remember { mutableStateOf<String?>(null) }
     var recordDurationSeconds by remember { mutableIntStateOf(0) }
     var recordingStartedAt by remember { mutableLongStateOf(0L) }
+
+    // Android Storage Access Framework: export original recording without transcoding.
+    var pendingExportPath by remember { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/mp4")
+    ) { uri: Uri? ->
+        val path = pendingExportPath
+        pendingExportPath = null
+        if (uri != null && path != null) {
+            try {
+                val source = File(path)
+                require(source.isFile && source.length() > 0L) { "File rekaman tidak ditemukan" }
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    FileInputStream(source).use { input -> input.copyTo(output) }
+                } ?: error("Tidak dapat membuka lokasi penyimpanan")
+                Toast.makeText(context, "Audio berhasil diekspor", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Ekspor gagal: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    val exportLatestRecording = {
+        val clip = tracks.asReversed().firstNotNullOfOrNull { track ->
+            if (track.kind == "VO") track.clips.lastOrNull { it.audioPath != null && File(it.audioPath).isFile } else null
+        }
+        if (clip?.audioPath == null) {
+            Toast.makeText(context, "Rekam suara terlebih dahulu", Toast.LENGTH_SHORT).show()
+        } else {
+            pendingExportPath = clip.audioPath
+            exportLauncher.launch("narasi_vo_${System.currentTimeMillis()}.m4a")
+        }
+    }
+
     
     // Timer for recording
     LaunchedEffect(recording) {
@@ -531,13 +568,13 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
             }
 
             TextButton(
-                onClick = { Toast.makeText(context, "Export MP3/SRT — Belum tersedia di tahap ini", Toast.LENGTH_SHORT).show() },
+                onClick = { exportLatestRecording() },
                 contentPadding = PaddingValues(4.dp),
                 modifier = Modifier.height(36.dp)
             ) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(2.dp))
-                Text("Export", fontSize = 11.sp)
+                Text("Export M4A", fontSize = 11.sp)
             }
         }
     }

@@ -48,7 +48,7 @@ data class Track(
     val id: Int,
     val kind: String, // "VO", "Music", "SFX", "Subtitle"
     val name: String,
-    val clips: MutableList<Clip> = mutableListOf()
+    val clips: androidx.compose.runtime.snapshots.SnapshotStateList<Clip> = mutableStateListOf()
 )
 
 class MainActivity : ComponentActivity() {
@@ -87,9 +87,9 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val tracks = remember {
         mutableStateListOf(
-            Track(1, "VO", "VO 1", mutableListOf(Clip(1, "VO 1 - Utama"))),
-            Track(2, "Music", "Music 1", mutableListOf(Clip(2, "BGM Latar"))),
-            Track(3, "Subtitle", "SRT 1", mutableListOf(Clip(3, "Subtitle 1")))
+            Track(1, "VO", "VO 1"),
+            Track(2, "Music", "Music 1"),
+            Track(3, "Subtitle", "SRT 1")
         )
     }
     var nextId by remember { mutableIntStateOf(4) }
@@ -112,6 +112,7 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var currentAudioPath by remember { mutableStateOf<String?>(null) }
     var recordDurationSeconds by remember { mutableIntStateOf(0) }
+    var recordingStartedAt by remember { mutableLongStateOf(0L) }
     
     // Timer for recording
     LaunchedEffect(recording) {
@@ -128,55 +129,65 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
     val startRecordingAction = {
         if (onCheckPermission()) {
             val file = File(context.filesDir, "vo_${System.currentTimeMillis()}.m4a")
-            currentAudioPath = file.absolutePath
             try {
                 val recorder = MediaRecorder().apply {
                     setAudioSource(MediaRecorder.AudioSource.MIC)
                     setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                     setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setOutputFile(currentAudioPath)
+                    setOutputFile(file.absolutePath)
                     prepare()
                     start()
                 }
+                currentAudioPath = file.absolutePath
                 mediaRecorder = recorder
+                recordingStartedAt = android.os.SystemClock.elapsedRealtime()
                 recording = true
             } catch (e: Exception) {
+                file.delete()
+                currentAudioPath = null
+                mediaRecorder?.release()
+                mediaRecorder = null
                 e.printStackTrace()
                 Toast.makeText(context, "Gagal memulai rekaman: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // Function to stop recording
+    // Save only successfully finalized audio; never add corrupt files to the timeline.
     val stopRecordingAction = {
+        val path = currentAudioPath
+        val elapsed = if (recordingStartedAt > 0L) android.os.SystemClock.elapsedRealtime() - recordingStartedAt else 0L
+        var saved = false
         try {
-            mediaRecorder?.apply {
-                stop()
-                release()
-            }
+            mediaRecorder?.stop()
+            saved = path != null && File(path).exists() && File(path).length() > 0L
         } catch (e: Exception) {
-            e.printStackTrace()
+            Toast.makeText(context, "Rekaman gagal disimpan", Toast.LENGTH_SHORT).show()
+        } finally {
+            try { mediaRecorder?.release() } catch (_: Exception) {}
+            mediaRecorder = null
+            recording = false
+            recordingStartedAt = 0L
+            currentAudioPath = null
         }
-        mediaRecorder = null
-        recording = false
-        
-        // Add clip to VO track
-        if (currentAudioPath != null) {
+        if (saved && path != null) {
             var voTrack = tracks.find { it.kind == "VO" }
             if (voTrack == null) {
-                voTrack = Track(nextId++, "VO", "VO 1", mutableListOf())
+                voTrack = Track(nextId++, "VO", "VO 1")
                 tracks.add(0, voTrack)
             }
             val clipName = "VO Rekaman ${voTrack.clips.size + 1}"
-            voTrack.clips.add(Clip(nextClipId++, clipName, currentAudioPath, recordDurationSeconds * 1000L))
-            Toast.makeText(context, "Rekaman disimpan ke $clipName", Toast.LENGTH_SHORT).show()
+            voTrack.clips.add(Clip(nextClipId++, clipName, path, elapsed))
+            Toast.makeText(context, "Rekaman disimpan: $clipName", Toast.LENGTH_SHORT).show()
+        } else if (path != null) {
+            File(path).delete()
         }
     }
 
     // Function to play latest audio
     val togglePlayback = {
         val lastVoClip = tracks.find { it.kind == "VO" }?.clips?.lastOrNull { it.audioPath != null }
-        val path = lastVoClip?.audioPath ?: currentAudioPath
+        val path = lastVoClip?.audioPath
         if (path != null && File(path).exists()) {
             if (playing) {
                 try {
@@ -269,10 +280,10 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
                     Slider(value = speed, onValueChange = { speed = it }, valueRange = 1f..5f, modifier = Modifier.fillMaxWidth(0.7f))
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                        if (!practiceMode && countdown == 0) {
+                        if (!practiceMode && countdown == 0 && recording) {
                             Button(
                                 onClick = {
-                                    stopRecordingAction()
+                                    if (recording) stopRecordingAction()
                                     teleprompterMode = false
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC63850))
@@ -363,7 +374,7 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
                             modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp, max = 54.dp)
                         )
                     }
-                    IconButton(onClick = { teleprompterMode = true; countdown = 3 }, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = { if (onCheckPermission()) { teleprompterMode = true; countdown = 3 } }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.Mic, contentDescription = "Mulai Rekam Teleprompter", tint = Purple)
                     }
                 }
@@ -389,7 +400,7 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
                                 listOf("VO" to "Voice Over", "Music" to "Background Music", "SFX" to "Sound Effect", "Subtitle" to "Subtitle").forEach { (kind, label) ->
                                     DropdownMenuItem(text = { Text(label, fontSize = 13.sp) }, onClick = {
                                         val count = tracks.count { it.kind == kind } + 1
-                                        tracks.add(Track(nextId++, kind, when (kind) { "VO" -> "VO $count"; "Music" -> "Music $count"; "SFX" -> "SFX $count"; else -> "SRT $count" }, mutableListOf(Clip(nextClipId++, label))))
+                                        tracks.add(Track(nextId++, kind, when (kind) { "VO" -> "VO $count"; "Music" -> "Music $count"; "SFX" -> "SFX $count"; else -> "SRT $count" }, mutableStateListOf()))
                                         addMenu = false
                                     })
                                 }
@@ -414,11 +425,11 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(t.name, color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(55.dp))
+
                             
                             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (t.clips.isEmpty()) {
-                                    Text("(Kosong)", color = Color.DarkGray, fontSize = 10.sp)
+                                    Text(t.name, color = Muted, fontSize = 11.sp)
                                 } else {
                                     t.clips.forEach { clip ->
                                         Box(
@@ -437,7 +448,7 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
                                             contentAlignment = Alignment.CenterStart
                                         ) {
                                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                Text(clip.name, color = Color.White, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Clip)
+                                                Text("${t.name} · ${clip.name}", color = Color.White, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Clip)
                                                 IconButton(
                                                     onClick = { t.clips.remove(clip) },
                                                     modifier = Modifier.size(16.dp)
@@ -499,8 +510,10 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilledIconButton(
                     onClick = {
-                        teleprompterMode = true
-                        countdown = 3
+                        if (onCheckPermission()) {
+                            teleprompterMode = true
+                            countdown = 3
+                        }
                     },
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFC63850)),
                     modifier = Modifier.size(44.dp)

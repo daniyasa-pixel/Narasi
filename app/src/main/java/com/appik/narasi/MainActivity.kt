@@ -7,7 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import java.io.FileInputStream
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -111,7 +110,7 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
     var practiceMode by remember { mutableStateOf(false) }
     
     // Audio recorders & players
-    var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    val wavRecorder = remember { WavAudioRecorder(context.applicationContext) }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var currentAudioPath by remember { mutableStateOf<String?>(null) }
     var recordDurationSeconds by remember { mutableIntStateOf(0) }
@@ -120,7 +119,7 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
     // Android Storage Access Framework: export original recording without transcoding.
     var pendingExportPath by remember { mutableStateOf<String?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("audio/mp4")
+        ActivityResultContracts.CreateDocument("audio/wav")
     ) { uri: Uri? ->
         val path = pendingExportPath
         pendingExportPath = null
@@ -145,11 +144,15 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
             Toast.makeText(context, "Rekam suara terlebih dahulu", Toast.LENGTH_SHORT).show()
         } else {
             pendingExportPath = clip.audioPath
-            exportLauncher.launch("narasi_vo_${System.currentTimeMillis()}.m4a")
+            exportLauncher.launch("narasi_vo_" + System.currentTimeMillis() + ".wav")
         }
     }
 
     
+    DisposableEffect(wavRecorder) {
+        onDispose { wavRecorder.cancel() }
+    }
+
     // Timer for recording
     LaunchedEffect(recording) {
         if (recording) {
@@ -161,60 +164,70 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
         }
     }
 
-    // Function to start recording
+    // Record the unprocessed master as lossless PCM WAV; effects are applied later.
     val startRecordingAction = {
-        if (onCheckPermission()) {
-            val file = File(context.filesDir, "vo_${System.currentTimeMillis()}.m4a")
+        if (!recording && onCheckPermission()) {
+            val file = File(context.filesDir, "vo_" + System.currentTimeMillis() + ".wav")
             try {
-                val recorder = MediaRecorder().apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setOutputFile(file.absolutePath)
-                    prepare()
-                    start()
-                }
+                // Prevent previously playing audio from leaking into a new recording.
+                try { mediaPlayer?.stop() } catch (_: Exception) {}
+                try { mediaPlayer?.release() } catch (_: Exception) {}
+                mediaPlayer = null
+                playing = false
+
+                val actualSampleRate = wavRecorder.start(file)
                 currentAudioPath = file.absolutePath
-                mediaRecorder = recorder
                 recordingStartedAt = android.os.SystemClock.elapsedRealtime()
                 recording = true
-            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    "Merekam WAV PCM " + actualSampleRate + " Hz",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (error: Exception) {
                 file.delete()
                 currentAudioPath = null
-                mediaRecorder?.release()
-                mediaRecorder = null
-                e.printStackTrace()
-                Toast.makeText(context, "Gagal memulai rekaman: ${e.message}", Toast.LENGTH_SHORT).show()
+                recordingStartedAt = 0L
+                Toast.makeText(
+                    context,
+                    "Gagal memulai rekaman: " + (error.message ?: "mikrofon tidak tersedia"),
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
 
-    // Save only successfully finalized audio; never add corrupt files to the timeline.
+    // Finalize the WAV header before adding a playable clip to the timeline.
     val stopRecordingAction = {
         val path = currentAudioPath
-        val elapsed = if (recordingStartedAt > 0L) android.os.SystemClock.elapsedRealtime() - recordingStartedAt else 0L
-        var saved = false
+        var completed: WavAudioRecorder.Result? = null
         try {
-            mediaRecorder?.stop()
-            saved = path != null && File(path).exists() && File(path).length() > 0L
-        } catch (e: Exception) {
-            Toast.makeText(context, "Rekaman gagal disimpan", Toast.LENGTH_SHORT).show()
+            completed = wavRecorder.stop()
+        } catch (error: Exception) {
+            Toast.makeText(
+                context,
+                "Rekaman gagal disimpan: " + (error.message ?: "kesalahan audio"),
+                Toast.LENGTH_LONG
+            ).show()
         } finally {
-            try { mediaRecorder?.release() } catch (_: Exception) {}
-            mediaRecorder = null
             recording = false
             recordingStartedAt = 0L
             currentAudioPath = null
         }
-        if (saved && path != null) {
+        val result = completed
+        if (result != null && path == result.file.absolutePath &&
+            result.file.isFile && result.file.length() > 44L
+        ) {
             var voTrack = tracks.find { it.kind == "VO" }
             if (voTrack == null) {
                 voTrack = Track(nextId++, "VO", "VO 1")
                 tracks.add(0, voTrack)
             }
-            val clipName = "VO Rekaman ${voTrack.clips.size + 1}"
-            voTrack.clips.add(Clip(nextClipId++, clipName, path, elapsed))
-            Toast.makeText(context, "Rekaman disimpan: $clipName", Toast.LENGTH_SHORT).show()
+            val clipName = "VO Rekaman " + (voTrack.clips.size + 1)
+            voTrack.clips.add(
+                Clip(nextClipId++, clipName, result.file.absolutePath, result.durationMs)
+            )
+            Toast.makeText(context, "Master WAV disimpan: " + clipName, Toast.LENGTH_SHORT).show()
         } else if (path != null) {
             File(path).delete()
         }
@@ -573,7 +586,7 @@ private fun StudioScreen(onCheckPermission: () -> Boolean) {
             ) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(2.dp))
-                Text("Export M4A", fontSize = 11.sp)
+                Text("Export WAV", fontSize = 11.sp)
             }
         }
     }

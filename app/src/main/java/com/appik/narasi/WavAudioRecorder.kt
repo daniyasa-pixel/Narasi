@@ -45,11 +45,10 @@ internal class WavAudioRecorder(private val context: Context) {
         val (record, rate) = startSupportedRecorder()
         var output: RandomAccessFile? = null
         try {
-            output = RandomAccessFile(file, "rw")
-            output.setLength(0L)
-            writeWavHeader(output, rate, 0L)
-
-            val wav = output
+            val wav = RandomAccessFile(file, "rw")
+            output = wav
+            wav.setLength(0L)
+            writeWavHeader(wav, rate, 0L)
             val bufferSize = maxOf(4096, (rate / 10) * 2)
             capturing = true
             pcmBytes = 0L

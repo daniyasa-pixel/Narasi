@@ -4,24 +4,7 @@
             "outputFile": "com.appik.narasi.app-mergeDebugResources-40:/values-hi/values-hi.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\9.6.0\\transforms\\ddeb5af2dda6e15dcf8308a9aac3e5e5\\transformed\\core-1.13.1\\res\\values-hi\\values-hi.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9",
-                        "startColumns": "4,4,4,4,4,4,4,4",
-                        "startOffsets": "55,153,256,361,462,575,681,808",
-                        "endColumns": "97,102,104,100,112,105,126,100",
-                        "endOffsets": "148,251,356,457,570,676,803,904"
-                    },
-                    "to": {
-                        "startLines": "2,3,4,5,6,7,8,81",
-                        "startColumns": "4,4,4,4,4,4,4,4",
-                        "startOffsets": "105,203,306,411,512,625,731,8444",
-                        "endColumns": "97,102,104,100,112,105,126,100",
-                        "endOffsets": "198,301,406,507,620,726,853,8540"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\9.6.0\\transforms\\5e90a292fae3469685c7299f25281769\\transformed\\material3-release\\res\\values-hi\\values-hi.xml",
+                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\8.13\\transforms\\bf4973f6df41d75e1c3d5aeb6092e8d3\\transformed\\material3-release\\res\\values-hi\\values-hi.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -38,7 +21,24 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\9.6.0\\transforms\\258a9cd9c06db552f8e0422b4e147261\\transformed\\foundation-release\\res\\values-hi\\values-hi.xml",
+                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\8.13\\transforms\\19029bb1c748a2bc2a2fbbb0d4148090\\transformed\\core-1.13.1\\res\\values-hi\\values-hi.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "55,153,256,361,462,575,681,808",
+                        "endColumns": "97,102,104,100,112,105,126,100",
+                        "endOffsets": "148,251,356,457,570,676,803,904"
+                    },
+                    "to": {
+                        "startLines": "2,3,4,5,6,7,8,81",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "105,203,306,411,512,625,731,8444",
+                        "endColumns": "97,102,104,100,112,105,126,100",
+                        "endOffsets": "198,301,406,507,620,726,853,8540"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\8.13\\transforms\\1cc25d83c42209a7cf6fe87c77fa450f\\transformed\\foundation-release\\res\\values-hi\\values-hi.xml",
                     "from": {
                         "startLines": "2,3",
                         "startColumns": "4,4",
@@ -55,7 +55,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\9.6.0\\transforms\\30c4e314b6bbee29caff19d6c86024cf\\transformed\\ui-release\\res\\values-hi\\values-hi.xml",
+                    "source": "C:\\Users\\LENOVO\\.gradle\\caches\\8.13\\transforms\\e5a255b1cf2fdcd3c3ff593a49569e1a\\transformed\\ui-release\\res\\values-hi\\values-hi.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",

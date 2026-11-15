@@ -2,11 +2,9 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/narasi.iml" filepath="$PROJECT_DIR$/.idea/modules/narasi.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/narasi.app.iml" filepath="$PROJECT_DIR$/.idea/modules/app/narasi.app.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/narasi.app.androidTest.iml" filepath="$PROJECT_DIR$/.idea/modules/app/narasi.app.androidTest.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/narasi.app.main.iml" filepath="$PROJECT_DIR$/.idea/modules/app/narasi.app.main.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/narasi.app.unitTest.iml" filepath="$PROJECT_DIR$/.idea/modules/app/narasi.app.unitTest.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/Narasi.app.androidTest.iml" filepath="$PROJECT_DIR$/.idea/modules/app/Narasi.app.androidTest.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/Narasi.app.main.iml" filepath="$PROJECT_DIR$/.idea/modules/app/Narasi.app.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/Narasi.app.unitTest.iml" filepath="$PROJECT_DIR$/.idea/modules/app/Narasi.app.unitTest.iml" />
     </modules>
   </component>
 </project>

@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
     <application
-        android:label="Narasi · VO Studio"
+        android:label="Narasi Hi-Res Lab"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false"
         android:allowBackup="false">

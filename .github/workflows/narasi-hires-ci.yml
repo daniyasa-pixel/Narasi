@@ -20,8 +20,13 @@ jobs:
           java-version: '17'
       - name: Install Android 35, NDK and CMake
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          SDK=/usr/local/lib/android/sdk
+          TOOL=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | head -1)
+          test -n "$TOOL"
+          yes | "$TOOL" --sdk_root="$SDK" --licenses > /dev/null || true
+          "$TOOL" --sdk_root="$SDK" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
       - name: Compile APK with bundled RNNoise engine
         run: ./gradlew :app:assembleDebug --no-daemon --stacktrace

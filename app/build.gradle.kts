@@ -24,6 +24,12 @@ android {
     externalNativeBuild {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".lab"
+            versionNameSuffix = "-debug"
+        }
+    }
     buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -74,7 +74,7 @@ private fun RecordingTestScreen() {
         mutableStateOf(store.getString("enhanced", null)?.let(::File)?.takeIf(File::isFile))
     }
     var captureInfo by remember {
-        mutableStateOf(store.getString("capture_info", "Belum ada rekaman"))
+        mutableStateOf(store.getString("capture_info", "Belum ada rekaman") ?: "Belum ada rekaman")
     }
     var message by remember {
         mutableStateOf("Master lossless. AI RNNoise sudah terpasang di APK dan bekerja offline.")

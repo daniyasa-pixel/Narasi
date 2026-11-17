@@ -6,12 +6,23 @@ plugins {
 android {
     namespace = "com.appik.narasi"
     compileSdk = 35
+    ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "com.appik.narasi"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0-lab"
+        ndk {
+            // Galaxy S24 is ARM64. Include common ABIs for distribution and emulator tests.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+        externalNativeBuild {
+            cmake { arguments += listOf("-DANDROID_STL=none") }
+        }
+    }
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
     buildFeatures { compose = true }
     compileOptions {

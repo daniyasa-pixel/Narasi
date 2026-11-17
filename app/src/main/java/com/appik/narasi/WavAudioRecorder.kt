@@ -5,30 +5,50 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 import kotlin.concurrent.thread
 
 /**
- * Records an uncompressed, editable PCM-16 mono WAV master.
- * Prefers 48 kHz; tries 44.1 kHz if the device cannot start at 48 kHz.
- * Voice enhancement must operate on a copy, never on this source file.
+ * Non-destructive recording master. Always writes the original samples as received
+ * from AudioRecord; never applies automatic enhancement or lossy compression.
+ *
+ * Prefer 96kHz/32-bit IEEE float, then 48kHz/32-bit float, then 24-bit packed PCM.
+ * The Android route may resample internally: we report the *negotiated API format*,
+ * not an unsupported claim about the microphone's physical converter resolution.
  */
 internal class WavAudioRecorder(private val context: Context) {
-    data class Result(
-        val file: File,
-        val sampleRate: Int,
-        val pcmBytes: Long
+    data class Format(
+        val rate: Int,
+        val encoding: Int,
+        val bits: Int,
+        val bytesPerSample: Int,
+        val wavType: Int,
+        val source: Int
     ) {
-        val durationMs: Long
-            get() = pcmBytes * 1000L / (sampleRate * 2L)
+        val label: String get() =
+            (rate / 1000).toString() + " kHz / " + bits + "-bit " +
+                (if (wavType == 3) "Float" else "PCM") + " WAV"
+        val sourceLabel: String get() = when (source) {
+            MediaRecorder.AudioSource.UNPROCESSED -> "UNPROCESSED"
+            MediaRecorder.AudioSource.VOICE_RECOGNITION -> "VOICE_RECOGNITION"
+            else -> "MIC"
+        }
+    }
+
+    data class Result(val file: File, val format: Format, val pcmBytes: Long) {
+        val sampleRate: Int get() = format.rate
+        val durationMs: Long get() = pcmBytes * 1000L /
+            (format.rate.toLong() * format.bytesPerSample)
     }
 
     private data class Session(
         val record: AudioRecord,
         val file: File,
-        val sampleRate: Int,
+        val format: Format,
         val worker: Thread
     )
 
@@ -36,43 +56,57 @@ internal class WavAudioRecorder(private val context: Context) {
     @Volatile private var pcmBytes = 0L
     @Volatile private var writerError: Throwable? = null
     private var session: Session? = null
+    @Volatile var activeFormat: Format? = null
+        private set
 
     @Synchronized
     fun start(file: File): Int {
-        check(session == null) { "Perekaman sebelumnya belum selesai" }
-
-        // Request microphone input before opening a new master file.
-        val (record, rate) = startSupportedRecorder()
+        check(session == null) { "Sesi perekaman sebelumnya belum selesai" }
+        val (recorder, format) = openBestRecorder()
         var output: RandomAccessFile? = null
         try {
+            file.parentFile?.mkdirs()
             val wav = RandomAccessFile(file, "rw")
             output = wav
-            wav.setLength(0L)
-            writeWavHeader(wav, rate, 0L)
-            val bufferSize = maxOf(4096, (rate / 10) * 2)
-            capturing = true
-            pcmBytes = 0L
+            wav.setLength(0)
+            writeWavHeader(wav, format, 0)
+            val buffer = ByteBuffer.allocateDirect(
+                maxOf(16384, AudioRecord.getMinBufferSize(
+                    format.rate, AudioFormat.CHANNEL_IN_MONO, format.encoding
+                ) * 2)
+            )
+            val scratch = ByteArray(16384)
+            pcmBytes = 0
             writerError = null
-
-            val worker = thread(start = false, name = "Narasi-PCM-WAV") {
+            capturing = true
+            activeFormat = format
+            val worker = thread(start = false, name = "Narasi-HiRes-WAV") {
                 try {
-                    val buffer = ByteArray(bufferSize)
                     while (capturing) {
-                        val count = record.read(
-                            buffer, 0, buffer.size, AudioRecord.READ_BLOCKING
-                        )
-                        if (count > 0) {
-                            if (pcmBytes + count > 0xFFFFFFFFL - 36L) {
-                                throw IOException("Rekaman melebihi batas ukuran WAV")
+                        buffer.clear()
+                        val read = recorder.read(buffer, buffer.capacity(), AudioRecord.READ_BLOCKING)
+                        if (read > 0) {
+                            val aligned = read - read % format.bytesPerSample
+                            if (aligned <= 0) continue
+                            if (pcmBytes + aligned > 0xFFFFFFFFL - 36L) {
+                                throw IOException("Mencapai batas WAV 4 GB. Hentikan rekaman.")
                             }
-                            wav.write(buffer, 0, count)
-                            pcmBytes += count
-                        } else if (count < 0 && capturing) {
-                            throw IOException("Mikrofon gagal membaca data: " + count)
+                            buffer.position(0)
+                            buffer.limit(aligned)
+                            var remaining = aligned
+                            while (remaining > 0) {
+                                val amount = minOf(remaining, scratch.size)
+                                buffer.get(scratch, 0, amount)
+                                wav.write(scratch, 0, amount)
+                                remaining -= amount
+                            }
+                            pcmBytes += aligned.toLong()
+                        } else if (read < 0 && capturing) {
+                            throw IOException("Gagal membaca mikrofon, kode " + read)
                         }
                     }
-                    wav.seek(0L)
-                    writeWavHeader(wav, rate, pcmBytes)
+                    wav.seek(0)
+                    writeWavHeader(wav, format, pcmBytes)
                     wav.fd.sync()
                 } catch (error: Throwable) {
                     writerError = error
@@ -80,14 +114,15 @@ internal class WavAudioRecorder(private val context: Context) {
                     try { wav.close() } catch (_: Exception) {}
                 }
             }
-            session = Session(record, file, rate, worker)
+            session = Session(recorder, file, format, worker)
             worker.start()
-            return rate
+            return format.rate
         } catch (error: Throwable) {
             capturing = false
+            activeFormat = null
             session = null
-            try { record.stop() } catch (_: Exception) {}
-            try { record.release() } catch (_: Exception) {}
+            try { recorder.stop() } catch (_: Exception) {}
+            try { recorder.release() } catch (_: Exception) {}
             try { output?.close() } catch (_: Exception) {}
             file.delete()
             throw error
@@ -96,73 +131,71 @@ internal class WavAudioRecorder(private val context: Context) {
 
     @Synchronized
     fun stop(): Result {
-        val active = session ?: throw IllegalStateException("Tidak ada rekaman aktif")
+        val current = session ?: error("Tidak ada perekaman aktif")
         capturing = false
-        try { active.record.stop() } catch (_: Exception) {}
-        try {
-            active.worker.join(3000L)
-        } catch (error: InterruptedException) {
+        try { current.record.stop() } catch (_: Exception) {}
+        try { current.worker.join(5000L) } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }
-        if (active.worker.isAlive) {
-            active.worker.interrupt()
-        }
-        try { active.record.release() } catch (_: Exception) {}
+        try { current.record.release() } catch (_: Exception) {}
         session = null
-
-        if (active.worker.isAlive) {
-            throw IOException("Penyimpanan WAV belum selesai. Rekaman tidak ditambahkan.")
+        activeFormat = null
+        if (current.worker.isAlive) {
+            current.worker.interrupt()
+            throw IOException("Penulisan WAV belum selesai")
         }
-
-        val error = writerError
-        val size = pcmBytes
-        if (error != null || size <= 0L || !active.file.isFile ||
-            active.file.length() != 44L + size
+        if (writerError != null || pcmBytes <= 0 ||
+            current.file.length() != 44L + pcmBytes
         ) {
-            active.file.delete()
-            throw IOException("Rekaman WAV gagal disimpan", error)
+            val error = writerError
+            current.file.delete()
+            throw IOException("File WAV tidak lengkap", error)
         }
-        return Result(active.file, active.sampleRate, size)
+        return Result(current.file, current.format, pcmBytes)
     }
 
     @Synchronized
     fun cancel() {
-        val active = session ?: return
+        val current = session ?: return
         capturing = false
-        try { active.record.stop() } catch (_: Exception) {}
-        try { active.worker.join(3000L) } catch (_: InterruptedException) {
+        try { current.record.stop() } catch (_: Exception) {}
+        try { current.worker.join(5000L) } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }
-        try { active.record.release() } catch (_: Exception) {}
-        if (!active.worker.isAlive) active.file.delete()
+        try { current.record.release() } catch (_: Exception) {}
+        if (!current.worker.isAlive) current.file.delete()
         session = null
+        activeFormat = null
     }
 
-    private fun startSupportedRecorder(): Pair<AudioRecord, Int> {
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val supportsRaw = audioManager.getProperty(
+    private fun openBestRecorder(): Pair<AudioRecord, Format> {
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val supportsRaw = manager.getProperty(
             AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED
         ).equals("true", ignoreCase = true)
+        val sources = if (supportsRaw)
+            intArrayOf(MediaRecorder.AudioSource.UNPROCESSED,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)
+        else intArrayOf(MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC)
 
-        val sources = if (supportsRaw) {
-            intArrayOf(
-                MediaRecorder.AudioSource.UNPROCESSED,
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                MediaRecorder.AudioSource.MIC
-            )
-        } else {
-            intArrayOf(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                MediaRecorder.AudioSource.MIC
-            )
+        val profiles = mutableListOf(
+            Triple(96000, AudioFormat.ENCODING_PCM_FLOAT, 32),
+            Triple(48000, AudioFormat.ENCODING_PCM_FLOAT, 32)
+        )
+        if (Build.VERSION.SDK_INT >= 31) {
+            profiles += Triple(96000, AudioFormat.ENCODING_PCM_24BIT_PACKED, 24)
+            profiles += Triple(48000, AudioFormat.ENCODING_PCM_24BIT_PACKED, 24)
         }
+        profiles += Triple(48000, AudioFormat.ENCODING_PCM_16BIT, 16)
+        profiles += Triple(44100, AudioFormat.ENCODING_PCM_16BIT, 16)
 
         var lastError: Throwable? = null
-        for (rate in intArrayOf(48000, 44100)) {
-            val minBuffer = AudioRecord.getMinBufferSize(
-                rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+        for ((rate, encoding, bits) in profiles) {
+            val minSize = AudioRecord.getMinBufferSize(
+                rate, AudioFormat.CHANNEL_IN_MONO, encoding
             )
-            if (minBuffer <= 0) continue
+            if (minSize <= 0) continue
             for (source in sources) {
                 var record: AudioRecord? = null
                 try {
@@ -170,54 +203,56 @@ internal class WavAudioRecorder(private val context: Context) {
                         .setAudioSource(source)
                         .setAudioFormat(
                             AudioFormat.Builder()
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                .setEncoding(encoding)
                                 .setSampleRate(rate)
-                                .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                                .build()
+                                .setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
                         )
-                        .setBufferSizeInBytes(maxOf(minBuffer * 2, rate / 5 * 2))
+                        .setBufferSizeInBytes(maxOf(minSize * 3, rate / 5 * (bits / 8)))
                         .build()
                     check(record.state == AudioRecord.STATE_INITIALIZED) {
-                        "Mikrofon tidak siap"
+                        "Mikrofon gagal inisialisasi"
                     }
                     record.startRecording()
                     check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                        "Mikrofon gagal memulai"
+                        "Mikrofon tidak merekam"
                     }
-                    return record to record.sampleRate
+                    val actual = record.format
+                    check(actual.encoding == encoding) { "Bit depth tidak sesuai" }
+                    check(actual.sampleRate == rate) { "Sample rate tidak sesuai" }
+                    val format = Format(rate, encoding, bits, bits / 8,
+                        if (encoding == AudioFormat.ENCODING_PCM_FLOAT) 3 else 1, source)
+                    return record to format
                 } catch (error: Exception) {
                     lastError = error
+                    try { record?.stop() } catch (_: Exception) {}
                     try { record?.release() } catch (_: Exception) {}
                 }
             }
         }
-        throw IOException("Perangkat tidak mendukung perekaman PCM 48/44,1 kHz", lastError)
+        throw IOException("Mikrofon tidak mendukung format WAV yang diperlukan", lastError)
     }
 
-    private fun writeWavHeader(file: RandomAccessFile, rate: Int, dataBytes: Long) {
-        file.writeBytes("RIFF")
-        writeIntLE(file, dataBytes + 36L)
-        file.writeBytes("WAVE")
-        file.writeBytes("fmt ")
-        writeIntLE(file, 16L)
-        writeShortLE(file, 1) // PCM
-        writeShortLE(file, 1) // Mono
-        writeIntLE(file, rate.toLong())
-        writeIntLE(file, (rate * 2).toLong()) // Bytes per second
-        writeShortLE(file, 2) // Block alignment
-        writeShortLE(file, 16) // Bits per sample
-        file.writeBytes("data")
-        writeIntLE(file, dataBytes)
-    }
-
-    private fun writeIntLE(file: RandomAccessFile, value: Long) {
-        for (shift in 0..24 step 8) {
-            file.write(((value shr shift) and 0xFFL).toInt())
+    companion object {
+        internal fun writeWavHeader(file: RandomAccessFile, format: Format, bytes: Long) {
+            file.writeBytes("RIFF")
+            writeIntLE(file, bytes + 36L)
+            file.writeBytes("WAVEfmt ")
+            writeIntLE(file, 16L)
+            writeShortLE(file, format.wavType)
+            writeShortLE(file, 1)
+            writeIntLE(file, format.rate.toLong())
+            writeIntLE(file, format.rate.toLong() * format.bytesPerSample)
+            writeShortLE(file, format.bytesPerSample)
+            writeShortLE(file, format.bits)
+            file.writeBytes("data")
+            writeIntLE(file, bytes)
         }
-    }
-
-    private fun writeShortLE(file: RandomAccessFile, value: Int) {
-        file.write(value and 0xFF)
-        file.write((value shr 8) and 0xFF)
+        private fun writeIntLE(file: RandomAccessFile, value: Long) {
+            for (shift in 0..24 step 8) file.write(((value shr shift) and 255L).toInt())
+        }
+        private fun writeShortLE(file: RandomAccessFile, value: Int) {
+            file.write(value and 255)
+            file.write((value shr 8) and 255)
+        }
     }
 }
